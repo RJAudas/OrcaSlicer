@@ -338,6 +338,8 @@ TEST_CASE("Bottom support interfaces survive a zero contact gap", "[SupportMater
 
 TEST_CASE("Synchronized bottom support interfaces survive a rounded variable layer gap", "[SupportMaterial][Regression]")
 {
+    const double support_angle = GENERATE(0.0, 90.0);
+    CAPTURE(support_angle);
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_deserialize_strict({
         { "enable_support",                  1 },
@@ -346,6 +348,9 @@ TEST_CASE("Synchronized bottom support interfaces survive a rounded variable lay
         { "initial_layer_print_height",      0.2 },
         { "independent_support_layer_height", false },
         { "support_on_build_plate_only",     0 },
+        { "support_base_pattern",            "rectilinear" },
+        { "support_base_pattern_spacing",    2.5 },
+        { "support_angle",                   support_angle },
         { "support_top_z_distance",          0.2 },
         { "support_bottom_z_distance",       0.2 },
         { "support_interface_top_layers",    0 },
@@ -366,6 +371,25 @@ TEST_CASE("Synchronized bottom support interfaces survive a rounded variable lay
     REQUIRE(std::any_of(layers.begin(), layers.end(), [](const Layer *layer) {
         return std::abs(layer->print_z - 2.16) < EPSILON;
     }));
+    // Count actual extrusion connections, not just interface layers: a restored
+    // cap is useful only if it carries support printed on the next layer.
+    Polygons previous_interface;
+    size_t checked_interface_layers = 0;
+    for (const SupportLayer *support : print.objects().front()->support_layers()) {
+        if (!previous_interface.empty()) {
+            Polygons support_polygons;
+            support->support_fills.polygons_covered_by_width(support_polygons, 0.f);
+            CAPTURE(support->print_z);
+            CHECK_FALSE(intersection(previous_interface, support_polygons).empty());
+            ++checked_interface_layers;
+        }
+        previous_interface.clear();
+        const ExtrusionEntityCollection fills = support->support_fills.flatten();
+        for (const ExtrusionEntity *entity : fills.entities)
+            if (entity->role() == erSupportMaterialInterface)
+                entity->polygons_covered_by_width(previous_interface, 0.f);
+    }
+    REQUIRE(checked_interface_layers == 2);
     REQUIRE(support_interface_layer_count(g) == 2);
 }
 
